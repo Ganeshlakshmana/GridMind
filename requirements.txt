@@ -1,0 +1,29 @@
+# GridMind — Python 3.13
+# pip install -r requirements.txt
+
+# Data generation
+faker==37.3.0
+pandas==2.2.3
+
+# LangChain / LangGraph  (0.3.x is the Python-3.13-compatible series)
+langchain==0.3.25
+langchain-anthropic==0.3.15
+langgraph==0.4.5
+anthropic==0.52.0
+
+# MCP server
+fastmcp==2.14.7
+
+# API
+fastapi==0.115.12
+uvicorn[standard]==0.35.0
+
+# Observability
+langsmith==0.3.45
+
+# Utilities
+python-dotenv==1.1.0
+
+# Dev / testing
+pytest==8.3.5
+httpx==0.28.1

@@ -1,0 +1,43 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# ── Environment ──────────────────────────────────────────────────────────────
+.env
+*.env.local
+
+# ── Generated data (runtime outputs) ─────────────────────────────────────────
+data/fleet.json
+data/escalations.json
+traces/
+evals/results/
+
+# ── Node / Frontend ──────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── LangSmith / Tracing ───────────────────────────────────────────────────────
+*.langsmith_cache
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+*.log
