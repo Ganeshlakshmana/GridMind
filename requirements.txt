@@ -27,3 +27,20 @@ python-dotenv==1.1.0
 # Dev / testing
 pytest==8.3.5
 httpx==0.28.1
+
+# Database Layer
+SQLAlchemy==2.0.38
+psycopg2-binary==2.9.10
+
+# Vector Layer (FAISS)
+faiss-cpu==1.9.0.post1
+
+# ML Layer (PyTorch)
+torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Time-Series Layer (BigQuery Mock with DuckDB)
+duckdb==1.2.0
+
+# DBT (Data Transformations)
+dbt-core==1.9.2
+dbt-duckdb==1.9.0

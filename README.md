@@ -1,292 +1,231 @@
 # GridMind
 
-**Autonomous VPP Operations Agent** — monitors, diagnoses, and resolves faults across a fleet of solar energy systems using a LangGraph agent, 10 production tools, and a React dashboard.
+**Autonomous Virtual Power Plant (VPP) Operations Agent** — monitors, diagnoses, and resolves faults across a fleet of 50 solar energy systems using a LangGraph agent, a PyTorch machine learning classifier, a PostgreSQL relational layer, a FAISS vector store, a DuckDB time-series layer (BigQuery mock), dbt transformations, Airflow orchestration, and a React dashboard.
 
 ---
 
-## What It Does
+## ⚡ What It Does
 
-GridMind continuously watches a fleet of 50 solar energy systems. When it detects an anomaly — inverter fault, battery drain, offline system, low output — it triages the issue, applies the right remediation automatically, verifies the fix, and escalates to a human only when necessary. The entire cycle runs in under 30 seconds.
+GridMind continuously monitors a fleet of 50 distributed solar energy systems. When it detects an anomaly (inverter fault, battery drain, offline system, low output) via its **PyTorch classifier model**, the agent:
+1. **Triages the anomaly** using a **LangGraph StateGraph** and retrieves historical incident context from a **FAISS vector store**.
+2. **Applies automated remediation** (BMS reset, inverter restart, reconnection attempt, or flag clearing).
+3. **Verifies the fix** by checking the system's post-remediation status.
+4. **Escalates to a human operator** (via relational tickets) only if the fix fails or if the anomaly requires manual intervention.
+5. **Ingests and transforms telemetry** continuously using **dbt** and **DuckDB** to generate real-time metrics and historical trends.
 
 ```
-Operator prompt
-      │
-      ▼
-Intent Router ──► out of scope? → refused immediately
-      │
-      ▼
-LangGraph Agent
-  monitor_node   → get_fleet_summary()
-  detect_node    → detect_anomalies()
-  triage_node    → LLM decides: fix / escalate / monitor
-  action_node    → resolve_issue() or escalate_issue()
-  verify_node    → get_system_status() confirms fix landed
-  report_node    → generate_ops_report()
-      │
-      ▼
-Structured report + trace written to disk
+       Operator prompt / Pipeline Cron
+                     │
+                     ▼
+       Intent Router ──► out of scope? → refused immediately
+                     │
+                     ▼
+              LangGraph Agent
+    ┌─────────────────────────────────┐
+    │  monitor_node → get_fleet_summary()
+    │  detect_node  → detect_anomalies() [PyTorch classifier model]
+    │  triage_node  → LLM + search_similar_incidents() [FAISS index]
+    │  action_node  → resolve_issue() or escalate_issue() [PostgreSQL]
+    │  verify_node  → get_system_status() confirms fix landed
+    │  report_node  → generate_ops_report()
+    └─────────────────────────────────┘
+                     │
+                     ▼
+     Structured report + trace written to disk
 ```
 
 ---
 
-## Project Structure
+## 📂 Project Structure
 
 ```
 gridmind/
 ├── data/
-│   ├── generate_fleet.py        # Task 1  — generates 50 systems with anomaly distribution
-│   ├── generate_history.py      # Task 2  — 24h hourly telemetry per system
-│   ├── fleet_store.py           # Task 3  — atomic read/write, in-memory cache
-│   ├── fleet.json               # generated — do not commit
-│   └── escalations.json         # generated — do not commit
+│   ├── generate_fleet.py        # Generates 50 systems with Berlin district coordinates
+│   ├── generate_history.py      # Generates 24h hourly telemetry per system
+│   ├── fleet_store.py           # Atomic PostgreSQL read/write with graceful JSON fallback
+│   ├── fleet.json               # Local fallback JSON database file
+│   └── escalations.json         # Local fallback escalations file
 │
 ├── tools/
-│   ├── fleet_tools.py           # 5 read tools
-│   ├── action_tools.py          # 3 write tools
-│   ├── analytics_tools.py       # 2 analytics tools
-│   └── registry.py              # ALL_TOOLS list — single import point
+│   ├── fleet_tools.py           # VPP monitoring & telemetry tools (including get_systems_by_zone)
+│   ├── action_tools.py          # Deterministic remediation and escalation tools
+│   ├── analytics_tools.py       # SQL-based analytics over DuckDB/BigQuery
+│   ├── geo.py                   # Geospatial utilities (Haversine, zoning, nearest-neighbor)
+│   └── registry.py              # Core tool definitions and single registration import point
+│
+├── db/
+│   ├── models.py                # SQLAlchemy declarative models (Postgres schema)
+│   ├── session.py               # SQL engine and session context with cached offline check
+│   ├── vector_store.py          # FAISS indexing with pure-Python local TF-IDF fallback
+│   └── bigquery_client.py       # DuckDB-backed Google BigQuery mock client
+│
+├── ml/
+│   ├── anomaly_model.py         # PyTorch MLP classification neural network architecture
+│   ├── train.py                 # PyTorch CPU training script (~2-3s runtime)
+│   ├── infer.py                 # Predictor wrapper calling the saved weights
+│   └── anomaly_model.pt         # Saved PyTorch model weights
+│
+├── dbt_project/
+│   ├── dbt_project.yml          # dbt project configurations
+│   ├── profiles.yml             # dbt profile connecting to the local DuckDB database
+│   └── models/                  # SQL transformations (staging and KPI marts)
+│       ├── staging/stg_telemetry.sql
+│       └── marts/fleet_health.sql & anomaly_summary.sql
+│
+├── airflow/
+│   ├── dags/
+│   │   └── gridmind_pipeline.py # Airflow DAG defining telemetry sync, dbt run, and agent session
+│   └── run_pipeline.py          # Sequential DAG simulator script
 │
 ├── agent/
-│   ├── state.py                 # VPPState TypedDict
-│   ├── nodes.py                 # 7 node functions
-│   ├── graph.py                 # compiled LangGraph StateGraph
-│   └── runner.py                # run_session() entrypoint + CLI
+│   ├── state.py                 # LangGraph VPPState definition
+│   ├── nodes.py                 # Graph nodes injecting FAISS incidents context
+│   ├── graph.py                 # Compiled StateGraph routing
+│   └── runner.py                # Command-line entrypoint & CLI
 │
-├── observability/
-│   ├── tracer.py                # writes traces/session_<id>.json after every run
-│   └── session_dashboard.py     # CLI summary of any session trace
+├── API/
+│   └── main.py                  # FastAPI server orchestrating 12 endpoints & intent routing
 │
-├── mcp_server/
-│   └── server.py                # FastMCP — all 10 tools over MCP protocol
-│
-├── api/
-│   └── main.py                  # FastAPI — 12 endpoints, intent router, guardrails
-│
-├── frontend/
-│   ├── App.jsx                  # React dashboard
-│   ├── index.html
-│   ├── vite.config.js
-│   └── src/main.jsx
-│
-├── evals/
-│   ├── scenarios.py             # 15 eval scenarios
-│   ├── runner.py                # runs all scenarios, scores, writes results
-│   └── results/                 # timestamped JSON results per run
-│
-├── traces/                      # runtime session traces — do not commit
-├── .env                         # API keys — do not commit
-├── requirements.txt
+├── frontend/                    # Vite-React frontend monitoring dashboard
+├── tests/                       # Unit tests (database, geo, ML, vector store, dbt)
+├── evals/                       # Automated scenario evaluation suite (15 scenarios)
+├── traces/                      # Trace directories tracking agent steps
+├── requirements.txt             # Python packages
 └── README.md
 ```
 
 ---
 
-## Quickstart
+## ⚙️ Installation & Setup
 
-### 1. Install dependencies
+### 1. Initialize Virtual Environment & Install Dependencies
 
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
+venv\Scripts\activate          # Windows
+source venv/bin/activate        # macOS/Linux
 pip install -r requirements.txt
 ```
 
-### 2. Set API key
+### 2. Configure Environment
+
+Create a `.env` file in the root directory:
 
 ```bash
-# .env
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-...     # Required for agent decision-making
+DATABASE_URL=postgresql://postgres:password@localhost:5432/gridmind  # Optional (falls back to local JSON files)
 ```
 
-### 3. Generate fleet data
+### 3. Generate Telemetry & Ingest into DuckDB
+
+Generates fleet structures, creates historical telemetry files, and syncs them to the DuckDB analytics database:
 
 ```bash
 python -m data.generate_fleet --seed 42
 python -m data.generate_history --seed 42
 ```
 
-### 4. Run the agent
+### 4. Train the PyTorch Anomaly Classifier
+
+Train the MLP neural network on local telemetry to detect anomalies. The model compiles instantly on CPU:
+
+```bash
+python -m ml.train
+```
+
+### 5. Compile dbt Transformation Models
+
+Ensure the dbt project compiles correctly and runs the transformations on your DuckDB telemetry:
+
+```bash
+dbt compile --project-dir dbt_project --profiles-dir dbt_project
+dbt run --project-dir dbt_project --profiles-dir dbt_project
+```
+
+---
+
+## 🚀 Running the System
+
+### Run the Airflow Pipeline Simulator
+Simulate the end-to-end VPP operations pipeline. This runs telemetry generation, BigQuery ingestion, dbt models, LangGraph agent triage, and escalation alerts in sequence:
+
+```bash
+# Set OMP bypass to avoid FAISS/PyTorch conflict on Windows
+$env:KMP_DUPLICATE_LIB_OK="TRUE"  # PowerShell
+python -m airflow.run_pipeline
+```
+
+### Run the Agent via CLI
+Directly run the LangGraph VPP agent to diagnose the fleet and resolve issues:
 
 ```bash
 python -m agent.runner "Run a full fleet diagnostic and fix what you can."
 ```
 
-### 5. View session dashboard
-
-```bash
-python -m observability.session_dashboard
-```
-
-### 6. Start the API
+### Start the FastAPI Backend
 
 ```bash
 uvicorn api.main:app --reload --port 8080
 ```
+Interactive documentation is available at `http://localhost:8080/docs`.
 
-### 7. Start the frontend
+### Start the React Dashboard Frontend
 
 ```bash
 cd frontend
-npm install vite @vitejs/plugin-react react react-dom recharts
+npm install
 npm run dev
 ```
-
-Open `http://localhost:3000`
+Open `http://localhost:3000` to view the UI dashboard.
 
 ---
 
-## Tools
+## 🧪 Testing & Evals
 
-| Tool | Type | Description |
+### Run Unit Tests
+GridMind features an isolated unit test suite covering geo utilities, database CRUD, ML models, vector store lookups, and dbt project compilation:
+
+```bash
+$env:KMP_DUPLICATE_LIB_OK="TRUE"
+python -m unittest discover -s tests
+```
+
+### Run Eval Suite
+Run the 15 agent evaluation scenarios. This verifies correct remediation, guardrail refusals, and proper intent routing:
+
+```bash
+python -m evals.runner
+```
+**Current pass rate: 15/15 (100% success)**
+
+---
+
+## 🛠️ Integrated Tools
+
+| Tool | Source | Description |
 |---|---|---|
-| `get_system_status` | read | Full state of one system |
-| `get_fleet_summary` | read | Aggregate counts, output, attention list |
-| `detect_anomalies` | read | Systems outside normal parameters |
-| `get_system_history` | read | Last N hours of readings |
-| `compare_systems` | read | Side-by-side metric comparison |
-| `resolve_issue` | action | Apply restart / reset / reconnect / clear |
-| `escalate_issue` | action | Raise human-intervention ticket |
-| `update_system_config` | action | Update physical config post field-work |
-| `get_fleet_trends` | analytics | Hour-by-hour metric aggregation |
-| `generate_ops_report` | analytics | Structured ops report, all sections |
+| `get_system_status` | `tools/fleet_tools.py` | Fetches the full current state of a single system |
+| `get_fleet_summary` | `tools/fleet_tools.py` | Retrieves overall metrics (total capacity, output, attention checklist) |
+| `get_systems_by_zone` | `tools/fleet_tools.py` | Retrieves all solar systems located in a specific grid zone |
+| `detect_anomalies` | `tools/fleet_tools.py` | Evaluates telemetry using the PyTorch MLP classifier model |
+| `get_system_history` | `tools/fleet_tools.py` | Fetches the last N hours of time-series readings from DuckDB |
+| `search_similar_incidents` | `db/vector_store.py` | Queries a FAISS index of historical escalations to guide current triage |
+| `resolve_issue` | `tools/action_tools.py` | Executes BMS resets, inverter restarts, and other auto-remediations |
+| `escalate_issue` | `tools/action_tools.py` | Logs escalation tickets inside PostgreSQL or JSON database layers |
+| `get_fleet_trends` | `tools/analytics_tools.py` | Queries DuckDB using SQL to aggregate fleet metrics |
+| `generate_ops_report` | `tools/analytics_tools.py` | Assembles a high-level operational diagnostics markdown report |
 
 ---
 
-## Agent Actions
+## 🛡️ Guardrails & Resilience
 
-| Anomaly | Auto Action |
-|---|---|
-| `inverter_fault` | `restart_inverter` |
-| `battery_drain` | `reset_battery_management` |
-| `low_output` | `clear_low_output_flag` |
-| `offline` | `force_reconnect` → escalate if fails |
+- **Out of Scope Protection**: Every chat request goes through an intent classifier (Fast API router) powered by Claude Haiku to bypass the agent and query data structures directly, or block prompts unrelated to VPP operations.
+- **Relational Fallback**: If a PostgreSQL instance is offline or unreachable, SQLAlchemy functions catch connection errors, log a warning, and fall back to local JSON flat-files (`fleet.json` and `escalations.json`) without interrupting operational flows.
+- **Vector Search Fallback**: If API keys are missing or offline, the FAISS vector store utilizes a custom local TF-IDF text encoder to continue providing context lookup capabilities.
 
 ---
 
-## API Endpoints
-
-```
-POST /chat                         # intent-routed chat (use from UI)
-POST /run                          # direct full agent session
-GET  /fleet                        # all 50 systems
-GET  /fleet/summary                # aggregate summary
-GET  /fleet/{system_id}            # single system
-POST /fleet/{system_id}/resolve    # resolve an issue
-POST /fleet/{system_id}/escalate   # raise escalation ticket
-GET  /anomalies                    # detect anomalous systems
-GET  /trends                       # fleet metric trends
-GET  /report                       # full ops report
-GET  /escalations                  # open tickets
-GET  /traces                       # list session traces
-GET  /traces/{session_id}          # single trace
-```
-
-Interactive docs at `http://localhost:8080/docs`
-
----
-
-## MCP Server
-
-Exposes all 10 tools over the MCP protocol for Claude Desktop and Claude Code.
-
-```bash
-# stdio (Claude Desktop)
-python -m mcp_server.server
-
-# SSE / HTTP
-python -m mcp_server.server --transport sse --port 8000
-```
-
-**Claude Desktop config** (`%APPDATA%/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "gridmind": {
-      "command": "python",
-      "args": ["-m", "mcp_server.server"],
-      "cwd": "D:/GridMind"
-    }
-  }
-}
-```
-
----
-
-## Evals
-
-```bash
-python -m evals.runner --list          # list all 15 scenarios
-python -m evals.runner --scenario S02  # run one scenario
-python -m evals.runner                 # run full suite
-```
-
-**Current pass rate: 15/15 (100%)**
-
-| Range | What's tested |
-|---|---|
-| S01–S09 | Full agent — triage, actions, verification |
-| S10–S11 | Guardrails — out-of-scope prompts refused |
-| S12–S14 | Intent routing — direct queries bypass agent |
-| S15 | Prompt injection refused |
-
-Results written to `evals/results/run_<timestamp>.json`
-
----
-
-## Guardrails
-
-Every `/chat` request is classified by a fast Haiku call before any tool runs:
-
-| Intent | Action |
-|---|---|
-| `agent_run` | Full LangGraph session |
-| `show_status` | `get_fleet_summary()` direct |
-| `show_anomalies` | `detect_anomalies()` direct |
-| `show_system` | `get_system_status()` direct |
-| `show_trends` | `get_fleet_trends()` direct |
-| `show_escalations` | `load_escalations()` direct |
-| `out_of_scope` | Refused — no tools called |
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Agent | LangGraph, LangChain, Claude claude-opus-4-5 |
-| Intent classifier | Claude Haiku (fast, cheap) |
-| API | FastAPI, Uvicorn |
-| MCP server | FastMCP |
-| Frontend | React, Vite, Recharts |
-| Data | Python, Pandas, Faker |
-| Evals | Custom harness, 15 scenarios |
-
----
-
-## Environment Variables
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...     # required
-LANGSMITH_API_KEY=...            # optional — LangSmith tracing
-```
-
----
-
-## Resetting the Fleet
-
-```bash
-# Full reset to clean state (seed 42)
-python -m data.generate_fleet --seed 42
-python -m data.generate_history --seed 42
-
-# Custom seed for reproducible testing
-python -m data.generate_fleet --seed 99
-python -m data.generate_history --seed 99
-```
-
----
-
-## License
+## 📝 License
 
 MIT

@@ -151,20 +151,30 @@ def triage_node(state: VPPState) -> dict:
     logger.info("[triage] Triaging %d anomalies via LLM", len(anomaly_list))
 
     # Build a compact anomaly summary for the prompt — avoids sending full history
-    compact = [
-        {
-            "system_id":          a["system_id"],
-            "location":           a["location"],
-            "anomaly_type":       a["anomaly_type"],
-            "status":             a["status"],
-            "solar_output_kw":    a["solar_output_kw"],
-            "expected_output_kw": a["expected_output_kw"],
-            "battery_soc_pct":    a["battery_soc_pct"],
-            "last_updated":       a["last_updated"],
-            "alerts":             a["alerts"],
-        }
-        for a in anomaly_list
-    ]
+    # and queries the vector store for similar past incidents
+    from db.vector_store import get_vector_store
+    store = get_vector_store()
+
+    compact = []
+    for a in anomaly_list:
+        query = f"anomaly_type={a['anomaly_type']} status={a['status']} alerts={', '.join(a['alerts'])}"
+        similar = store.search(query, k=1)
+        past_case = "No matching past case found."
+        if similar:
+            past_case = f"Action: {similar[0]['action']} (Result: {similar[0]['result']}). Case study: {similar[0]['text']}"
+
+        compact.append({
+            "system_id":             a["system_id"],
+            "location":              a["location"],
+            "anomaly_type":          a["anomaly_type"],
+            "status":                a["status"],
+            "solar_output_kw":       a["solar_output_kw"],
+            "expected_output_kw":    a["expected_output_kw"],
+            "battery_soc_pct":       a["battery_soc_pct"],
+            "last_updated":          a["last_updated"],
+            "alerts":                a["alerts"],
+            "similar_past_incident": past_case,
+        })
 
     user_content = (
         f"Operator request: {state.get('prompt', 'Run full diagnostic.')}\n\n"

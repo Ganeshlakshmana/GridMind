@@ -23,12 +23,14 @@ Usage:
 
 from tools.action_tools import escalate_issue, resolve_issue, update_system_config
 from tools.analytics_tools import generate_ops_report, get_fleet_trends
+from db.vector_store import search_similar_incidents
 from tools.fleet_tools import (
     compare_systems,
     detect_anomalies,
     get_fleet_summary,
     get_system_history,
     get_system_status,
+    get_systems_by_zone,
 )
 
 ALL_TOOLS: list = [
@@ -38,6 +40,8 @@ ALL_TOOLS: list = [
     detect_anomalies,        # find systems outside normal parameters
     get_system_history,      # last N hours of readings for one system
     compare_systems,         # side-by-side metric comparison
+    get_systems_by_zone,     # retrieve systems inside a grid zone
+    search_similar_incidents, # search similar past VPP incidents
     # ── Action tools ───────────────────────────────────────────────────────
     resolve_issue,           # apply a remediation action
     escalate_issue,          # raise a human-intervention ticket

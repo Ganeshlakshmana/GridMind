@@ -1,0 +1,7 @@
+gridmind:
+  outputs:
+    dev:
+      type: duckdb
+      path: ../data/gridmind_bq.db
+      threads: 1
+  target: dev

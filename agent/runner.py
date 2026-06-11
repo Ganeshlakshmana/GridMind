@@ -19,9 +19,13 @@ Usage:
 
 import json
 import logging
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
+
+# Fix OpenMP conflict between PyTorch and FAISS on Windows
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 from dotenv import load_dotenv
 

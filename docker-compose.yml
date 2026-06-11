@@ -1,6 +1,19 @@
 version: "3.9"
 
 services:
+  # ── PostgreSQL database ─────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: gridmind
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
   # ── FastAPI backend ─────────────────────────────────────────────────────────
   api:
     build:
@@ -11,9 +24,13 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/gridmind
     volumes:
       - ./data:/app/data
       - ./traces:/app/traces
+    depends_on:
+      - db
     restart: unless-stopped
 
   # ── MCP server (SSE mode) ───────────────────────────────────────────────────
@@ -26,8 +43,12 @@ services:
       - "8001:8001"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/gridmind
     volumes:
       - ./data:/app/data
+    depends_on:
+      - db
     restart: unless-stopped
 
   # ── React frontend (production build via nginx) ─────────────────────────────
@@ -38,3 +59,6 @@ services:
   #     - "3000:80"
   #   depends_on:
   #     - api
+
+volumes:
+  postgres_data:

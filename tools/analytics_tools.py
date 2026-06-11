@@ -87,55 +87,98 @@ def get_fleet_trends(
             f"Valid metrics: {sorted(_VALID_METRICS)}."
         )
 
-    fleet  = load_fleet()
-    series = []
+    try:
+        from db.bigquery_client import get_bq_client, sync_json_to_duckdb
+        sync_json_to_duckdb()
+        client = get_bq_client()
+        
+        # Get the distinct timestamps of the latest hours_back readings
+        # to filter the query correctly
+        query_str = f"""
+            WITH latest_timestamps AS (
+                SELECT DISTINCT timestamp 
+                FROM telemetry 
+                ORDER BY timestamp DESC 
+                LIMIT {hours_back}
+            )
+            SELECT
+                timestamp,
+                AVG({metric}) as avg_val,
+                SUM({metric}) as total_val,
+                COUNT({metric}) as reporting_cnt,
+                SUM(CASE WHEN status = 'healthy' THEN 1 ELSE 0 END) as healthy_cnt,
+                SUM(CASE WHEN status != 'healthy' AND status IS NOT NULL THEN 1 ELSE 0 END) as anomaly_cnt
+            FROM telemetry
+            WHERE timestamp IN (SELECT timestamp FROM latest_timestamps)
+            GROUP BY timestamp
+            ORDER BY timestamp ASC
+        """
+        rows = client.query(query_str).result()
+        series = []
+        for hour_idx, r in enumerate(rows):
+            ts = r["timestamp"]
+            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            
+            avg = round(float(r["avg_val"]), 2) if r["avg_val"] is not None else 0.0
+            total = round(float(r["total_val"]), 2) if r["total_val"] is not None else 0.0
+            
+            series.append({
+                "hour_index":    hour_idx,
+                "timestamp":     ts_str,
+                "avg":           avg,
+                "total":         total,
+                "reporting":     int(r["reporting_cnt"]),
+                "healthy_count": int(r["healthy_cnt"]),
+                "anomaly_count": int(r["anomaly_cnt"]),
+            })
+    except Exception as exc:
+        # Fallback to local JSON array loop
+        fleet  = load_fleet()
+        series = []
 
-    for hour_idx in range(hours_back):
-        # Align all systems to the same relative hour slot
-        # history[-hours_back + hour_idx] gives the correct absolute hour
-        offset = -hours_back + hour_idx
+        for hour_idx in range(hours_back):
+            offset = -hours_back + hour_idx
 
-        values        = []
-        healthy_count = 0
-        anomaly_count = 0
-        timestamp     = None
+            values        = []
+            healthy_count = 0
+            anomaly_count = 0
+            timestamp     = None
 
-        for system in fleet:
-            history = system.get("history", [])
-            if len(history) < hours_back:
-                continue
+            for system in fleet:
+                history = system.get("history", [])
+                if len(history) < hours_back:
+                    continue
 
-            reading = history[offset]
-            if timestamp is None and reading.get("timestamp"):
-                timestamp = reading["timestamp"]
+                reading = history[offset]
+                if timestamp is None and reading.get("timestamp"):
+                    timestamp = reading["timestamp"]
 
-            val = reading.get(metric)
+                val = reading.get(metric)
 
-            # battery_soc_pct is only meaningful for systems with batteries
-            if metric == "battery_soc_pct" and system["system_type"] == "solar_only":
-                continue
+                if metric == "battery_soc_pct" and system["system_type"] == "solar_only":
+                    continue
 
-            if val is not None:
-                values.append(val)
+                if val is not None:
+                    values.append(val)
 
-            status = reading.get("status")
-            if status == "healthy":
-                healthy_count += 1
-            elif status is not None:
-                anomaly_count += 1
+                status = reading.get("status")
+                if status == "healthy":
+                    healthy_count += 1
+                elif status is not None:
+                    anomaly_count += 1
 
-        avg   = round(sum(values) / len(values), 2) if values else 0.0
-        total = round(sum(values), 2)
+            avg   = round(sum(values) / len(values), 2) if values else 0.0
+            total = round(sum(values), 2)
 
-        series.append({
-            "hour_index":    hour_idx,
-            "timestamp":     timestamp,
-            "avg":           avg,
-            "total":         total,
-            "reporting":     len(values),
-            "healthy_count": healthy_count,
-            "anomaly_count": anomaly_count,
-        })
+            series.append({
+                "hour_index":    hour_idx,
+                "timestamp":     timestamp,
+                "avg":           avg,
+                "total":         total,
+                "reporting":     len(values),
+                "healthy_count": healthy_count,
+                "anomaly_count": anomaly_count,
+            })
 
     # ── Summary statistics ────────────────────────────────────────────────────
     avgs = [pt["avg"] for pt in series if pt["avg"] is not None]

@@ -31,6 +31,29 @@ BERLIN_DISTRICTS = [
     "Treptow", "Köpenick", "Weißensee", "Hohenschönhausen", "Hellersdorf",
 ]
 
+BERLIN_DISTRICT_COORDINATES = {
+    "Mitte": (52.5200, 13.4050),
+    "Prenzlauer Berg": (52.5398, 13.4285),
+    "Friedrichshain": (52.5150, 13.4540),
+    "Kreuzberg": (52.4986, 13.4069),
+    "Neukölln": (52.4812, 13.4354),
+    "Tempelhof": (52.4786, 13.3850),
+    "Schöneberg": (52.4822, 13.3552),
+    "Charlottenburg": (52.5186, 13.2931),
+    "Spandau": (52.5353, 13.1978),
+    "Steglitz": (52.4506, 13.3198),
+    "Zehlendorf": (52.4342, 13.2594),
+    "Lichtenberg": (52.5323, 13.4989),
+    "Marzahn": (52.5441, 13.5830),
+    "Pankow": (52.5689, 13.4023),
+    "Reinickendorf": (52.5902, 13.3238),
+    "Treptow": (52.4883, 13.4797),
+    "Köpenick": (52.4457, 13.5746),
+    "Weißensee": (52.5539, 13.4633),
+    "Hohenschönhausen": (52.5642, 13.5042),
+    "Hellersdorf": (52.5369, 13.6044),
+}
+
 SYSTEM_TYPES = ["solar_only", "solar+battery", "solar+battery+ev"]
 
 # Anomaly distribution from PRD §11.1
@@ -161,6 +184,13 @@ def build_fleet(seed: int | None = None) -> list[dict]:
         soc         = _battery_soc(anomaly, system_type, rng)
         feed_in     = _grid_feed_in(output, anomaly, rng)
 
+        # Assign location district and compute jittered coordinates
+        district = rng.choice(BERLIN_DISTRICTS)
+        centroid_lat, centroid_lon = BERLIN_DISTRICT_COORDINATES[district]
+        # Jitter coordinates by up to 0.005 (~500m)
+        latitude = round(centroid_lat + rng.uniform(-0.005, 0.005), 6)
+        longitude = round(centroid_lon + rng.uniform(-0.005, 0.005), 6)
+
         # Offline systems: stale timestamp (30–90 min ago)
         if anomaly == "offline":
             stale_delta = rng.randint(30, 90) * 60
@@ -172,7 +202,9 @@ def build_fleet(seed: int | None = None) -> list[dict]:
 
         system: dict = {
             "system_id":           system_id,
-            "location":            rng.choice(BERLIN_DISTRICTS),
+            "location":            district,
+            "latitude":            latitude,
+            "longitude":           longitude,
             "system_type":         system_type,
             "solar_capacity_kw":   capacity,
             "solar_output_kw":     output,
@@ -201,7 +233,7 @@ def validate(fleet: list[dict]) -> None:
 
     # Schema completeness
     required = {
-        "system_id", "location", "system_type", "solar_capacity_kw",
+        "system_id", "location", "latitude", "longitude", "system_type", "solar_capacity_kw",
         "solar_output_kw", "expected_output_kw", "battery_soc_pct",
         "grid_feed_in_kw", "status", "anomaly_type", "last_updated",
         "history", "alerts",
@@ -239,7 +271,7 @@ def validate(fleet: list[dict]) -> None:
     if (df.loc[inv_mask, "solar_output_kw"] != 0).any():
         raise ValueError("Inverter fault systems must have solar_output_kw == 0.")
 
-    print(f"✓ Validation passed — {len(fleet)} systems, distribution correct.")
+    print(f"Success - Validation passed — {len(fleet)} systems, distribution correct.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -261,7 +293,7 @@ def main() -> None:
 
     # Summary printed to stdout — useful in CI and during dev
     df = pd.DataFrame(fleet)
-    print(f"✓ Written → {out_path}")
+    print(f"Written to {out_path}")
     print(f"\nFleet summary:")
     print(df["status"].value_counts().to_string())
     print(f"\nAnomaly breakdown:")

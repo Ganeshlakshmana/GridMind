@@ -21,6 +21,7 @@ pip-wheel-metadata/
 # ── Generated data (runtime outputs) ─────────────────────────────────────────
 data/fleet.json
 data/escalations.json
+*.db
 traces/
 evals/results/
 
@@ -28,6 +29,12 @@ evals/results/
 node_modules/
 frontend/dist/
 frontend/.vite/
+
+# ── dbt ──────────────────────────────────────────────────────────────────────
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/.user.yml
 
 # ── IDE / OS ─────────────────────────────────────────────────────────────────
 .vscode/

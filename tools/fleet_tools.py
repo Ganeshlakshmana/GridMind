@@ -3,9 +3,8 @@ fleet_tools.py
 
 Five read-only tools for fleet inspection.
 Decorated with @tool so they work identically in:
-  - LangGraph agent (Tasks 13–16)
-  - MCP server       (Tasks 20–22)
-  - Eval harness     (Tasks 26–28)
+  - LangGraph agent  
+  - Eval harness     
 
 No writes. No side effects. Pure reads from fleet_store.
 """
@@ -131,19 +130,37 @@ def detect_anomalies(
 
     results = []
 
+    affected_zones = set()
     for s in fleet:
         flagged      = False
         flag_reason  = None
 
-        # Filter by stored anomaly label
-        if anomaly_type:
-            if s["anomaly_type"] == anomaly_type:
-                flagged     = True
-                flag_reason = anomaly_type
-        else:
-            if s["anomaly_type"] is not None:
-                flagged     = True
-                flag_reason = s["anomaly_type"]
+        # Primary detector: PyTorch inference
+        try:
+            from ml.infer import predict_anomaly
+            predicted = predict_anomaly(s)
+            if anomaly_type:
+                if predicted == anomaly_type:
+                    flagged = True
+                    flag_reason = predicted
+            else:
+                if predicted is not None:
+                    flagged = True
+                    flag_reason = predicted
+        except Exception as e:
+            # Fallback will handle it
+            pass
+
+        # Fallback detector: stored anomaly label rules
+        if not flagged:
+            if anomaly_type:
+                if s["anomaly_type"] == anomaly_type:
+                    flagged     = True
+                    flag_reason = anomaly_type
+            else:
+                if s["anomaly_type"] is not None:
+                    flagged     = True
+                    flag_reason = s["anomaly_type"]
 
         # Additional threshold check — catches degraded systems not yet labeled
         if threshold_pct is not None and s["expected_output_kw"] and s["expected_output_kw"] > 0:
@@ -156,6 +173,8 @@ def detect_anomalies(
             results.append({
                 "system_id":          s["system_id"],
                 "location":           s["location"],
+                "latitude":           s.get("latitude"),
+                "longitude":          s.get("longitude"),
                 "status":             s["status"],
                 "anomaly_type":       s["anomaly_type"],
                 "flag_reason":        flag_reason,
@@ -165,10 +184,14 @@ def detect_anomalies(
                 "alerts":             s["alerts"],
                 "last_updated":       s["last_updated"],
             })
+            if s.get("latitude") is not None and s.get("longitude") is not None:
+                from tools.geo import get_grid_zone
+                affected_zones.add(get_grid_zone(s["latitude"], s["longitude"]))
 
     return {
-        "total_anomalies": len(results),
-        "anomalies":       results,
+        "total_anomalies":     len(results),
+        "anomalies":           results,
+        "affected_grid_zones": sorted(list(affected_zones)),
     }
 
 
@@ -194,15 +217,50 @@ def get_system_history(system_id: str, hours_back: int = 24) -> dict:
     if not 1 <= hours_back <= 24:
         raise ValueError(f"hours_back must be between 1 and 24, got {hours_back}.")
 
-    system  = get_system(system_id)
-    history = system.get("history", [])
-    slice_  = history[-hours_back:] if len(history) >= hours_back else history
+    system = get_system(system_id)
+    readings = []
+
+    try:
+        from db.bigquery_client import get_bq_client, sync_json_to_duckdb
+        sync_json_to_duckdb()
+        client = get_bq_client()
+        query_str = f"""
+            SELECT 
+                timestamp,
+                solar_output_kw,
+                expected_output_kw,
+                battery_soc_pct,
+                grid_feed_in_kw,
+                status
+            FROM telemetry
+            WHERE system_id = '{system_id}'
+            ORDER BY timestamp DESC
+            LIMIT {hours_back}
+        """
+        rows = client.query(query_str).result()
+        # Reverse to ensure oldest first
+        for r in reversed(rows):
+            # Convert timestamp to ISO format string
+            ts = r["timestamp"]
+            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            readings.append({
+                "timestamp":          ts_str,
+                "solar_output_kw":    r["solar_output_kw"],
+                "expected_output_kw": r["expected_output_kw"],
+                "battery_soc_pct":    r["battery_soc_pct"],
+                "grid_feed_in_kw":    r["grid_feed_in_kw"],
+                "status":             r["status"],
+            })
+    except Exception:
+        # Fallback to local JSON array
+        history = system.get("history", [])
+        readings = history[-hours_back:] if len(history) >= hours_back else history
 
     return {
         "system_id":    system_id,
         "anomaly_type": system["anomaly_type"],
         "hours_back":   hours_back,
-        "readings":     slice_,
+        "readings":     readings,
     }
 
 
@@ -274,4 +332,42 @@ def compare_systems(system_ids: list[str]) -> dict:
     return {
         "systems":           rows,
         "comparison_notes":  notes,
+    }
+
+
+# ── 6. get_systems_by_zone ───────────────────────────────────────────────────
+
+@tool
+def get_systems_by_zone(zone_id: str) -> dict:
+    """
+    Retrieve all systems located in a specific VPP grid zone.
+
+    Args:
+        zone_id: Grid zone identifier, e.g. 'ZONE_CENTER', 'ZONE_NORTH', 'ZONE_SOUTH', 'ZONE_EAST', 'ZONE_WEST'.
+
+    Returns:
+        {
+          "zone_id": str,
+          "total_systems": int,
+          "systems": list[dict],
+        }
+    """
+    from tools.geo import get_grid_zone
+    fleet = load_fleet()
+    matched = []
+    for s in fleet:
+        if s.get("latitude") is not None and s.get("longitude") is not None:
+            if get_grid_zone(s["latitude"], s["longitude"]) == zone_id:
+                matched.append({
+                    "system_id": s["system_id"],
+                    "location": s["location"],
+                    "latitude": s["latitude"],
+                    "longitude": s["longitude"],
+                    "status": s["status"],
+                    "anomaly_type": s["anomaly_type"],
+                })
+    return {
+        "zone_id": zone_id,
+        "total_systems": len(matched),
+        "systems": matched,
     }

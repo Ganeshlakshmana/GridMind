@@ -125,9 +125,12 @@ def resolve_issue(
             extra_fields = {}
 
         case "force_reconnect":
-            # Reconnect succeeds 80% of the time in simulation
+            # Reconnect succeeds 80% of the time in simulation.
+            # Seeding local Random with system_id makes this action deterministic
+            # per system and stable across evaluation runs.
             import random
-            success = random.random() < 0.80
+            local_rng = random.Random(system_id)
+            success = local_rng.random() < 0.80
             if success:
                 new_status   = "healthy"
                 new_anomaly  = None

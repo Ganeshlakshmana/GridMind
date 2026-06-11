@@ -253,7 +253,7 @@ def validate(fleet: list[dict]) -> None:
             if socs and socs[-1] >= socs[0]:
                 raise ValueError(f"{sid}: battery_drain SOC should trend downward")
 
-    print(f"✓ History validation passed — {len(fleet)} systems, 24 readings each.")
+    print(f"Success - History validation passed — {len(fleet)} systems, 24 readings each.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -282,7 +282,15 @@ def main() -> None:
     with open(fleet_path, "w", encoding="utf-8") as f:
         json.dump(fleet, f, indent=2, ensure_ascii=False)
 
-    print(f"✓ Written → {fleet_path}")
+    print(f"Written to {fleet_path}")
+
+    # Synchronize to BigQuery/DuckDB mock layer
+    try:
+        from db.bigquery_client import sync_json_to_duckdb
+        sync_json_to_duckdb()
+        print("Synced history to BigQuery/DuckDB time-series database.")
+    except Exception as e:
+        print(f"Warning: DuckDB sync failed: {e}")
 
     # Spot-check: print last 3 history entries for one anomalous system
     sample = next((s for s in fleet if s["anomaly_type"] == "inverter_fault"), fleet[0])
